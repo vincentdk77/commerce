@@ -58,7 +58,7 @@ object UserVisitSessionAnalyze {
 
     // 首先要从user_visit_action的Hive表中，查询出来指定日期范围内的行为数据
     val actionRDD = this.getActionRDDByDateRange(spark, taskParam)
-    actionRDD.foreach(println(_))
+//    actionRDD.foreach(println(_))
 
     // 将用户行为信息转换为 K-V 结构
     val sessionid2actionRDD = actionRDD.map(item => (item.session_id, item))

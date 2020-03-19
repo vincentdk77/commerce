@@ -864,16 +864,16 @@ object UserVisitSessionAnalyze {
         Constants.FIELD_STEP_LENGTH + "=" + stepLength + "|" +
         Constants.FIELD_START_TIME + "=" + DateUtils.formatTime(startTime)
 
-      (userid, partAggrInfo);
+      (userid, partAggrInfo);//TODO 变成这样了，应该有多个相同的userid的元素了吧
     }
+    println("map后元素个数："+userid2PartAggrInfoRDD.count())//1111不变
 
     // 查询所有用户数据，并映射成<userid,Row>的格式
     import spark.implicits._
     val userid2InfoRDD = spark.sql("select * from user_info").as[UserInfo].rdd.map(item => (item.user_id, item))
 
-    // 将session粒度聚合数据，与用户信息进行join
+    // 将session粒度聚合数据，与用户信息进行join（//TODO userid2PartAggrInfoRDD中有多个相同的key，会一一与userid2InfoRDD的每个元素连接，结果也是有多个相同的key）
     val userid2FullInfoRDD = userid2PartAggrInfoRDD.join(userid2InfoRDD);
-
     // 对join起来的数据进行拼接，并且返回<sessionid,fullAggrInfo>格式的数据
     val sessionid2FullAggrInfoRDD = userid2FullInfoRDD.map { case (uid, (partAggrInfo, userInfo)) =>
       val sessionid = StringUtils.getFieldFromConcatString(partAggrInfo, "\\|", Constants.FIELD_SESSION_ID)
@@ -886,6 +886,7 @@ object UserVisitSessionAnalyze {
 
       (sessionid, fullAggrInfo)
     }
+    println("join后元素个数："+sessionid2FullAggrInfoRDD.count())//1111不变
 
     sessionid2FullAggrInfoRDD
   }

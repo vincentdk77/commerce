@@ -65,6 +65,9 @@ object AdClickRealTimeStat {
     val adRealTimeLogDStream=KafkaUtils.createDirectStream[String,String](ssc, LocationStrategies.PreferConsistent,ConsumerStrategies.Subscribe[String,String](Array(topics),kafkaParam))
 
     var adRealTimeValueDStream = adRealTimeLogDStream.map(consumerRecordRDD => consumerRecordRDD.value())
+    //timestamp province city userid adid
+    //1584581561653 4 4 6 17
+    //adRealTimeValueDStream.print()
 
     // 用于Kafka Stream的线程非安全问题，重新分区切断血统
     adRealTimeValueDStream = adRealTimeValueDStream.repartition(400)
@@ -72,16 +75,17 @@ object AdClickRealTimeStat {
     // 根据动态黑名单进行数据过滤 (userid, timestamp province city userid adid)
     val filteredAdRealTimeLogDStream = filterByBlacklist(spark,adRealTimeValueDStream)
 
-    // 业务功能一：生成动态黑名单
+    // 业务功能一：生成动态黑名单（实现实时的动态黑名单机制：将每天对某个广告点击超过 100 次的用户拉黑。）
     generateDynamicBlacklist(filteredAdRealTimeLogDStream)
 
-    // 业务功能二：计算广告点击流量实时统计结果（yyyyMMdd_province_city_adid,clickCount）
+    // 业务功能二：计算广告点击流量实时统计结果（yyyyMMdd_province_city_adid,clickCount）   （每天各省各城市各广告的点击流量实时统计。）
+      //从启动开始统计，启动前如果也有，就无法包括了  updateStateByKey
     val adRealTimeStatDStream = calculateRealTimeStat(filteredAdRealTimeLogDStream)
 
     // 业务功能三：实时统计每天每个省份top3热门广告
     calculateProvinceTop3Ad(spark,adRealTimeStatDStream)
 
-    // 业务功能四：实时统计每天每个广告在最近1小时的滑动窗口内的点击趋势（每分钟的点击量）
+    // 业务功能四：实时统计每天每个广告在最近1小时的滑动窗口内的点击趋势（每分钟的点击量(滑动步长)）
     calculateAdClickCountByWindow(adRealTimeValueDStream)
 
     ssc.start()
@@ -312,7 +316,7 @@ object AdClickRealTimeStat {
   }
 
   /**
-    * 业务功能一：生成动态黑名单
+    * 业务功能一：生成动态黑名单（实现实时的动态黑名单机制：将每天对某个广告点击超过 100 次的用户拉黑。）
     * @param filteredAdRealTimeLogDStream
     */
   def generateDynamicBlacklist(filteredAdRealTimeLogDStream: DStream[(Long, String)]) {
@@ -437,6 +441,14 @@ object AdClickRealTimeStat {
 
       // 首先，从mysql中查询所有黑名单用户，将其转换为一个rdd
       val adBlacklists = AdBlacklistDAO.findAll()
+
+      //其实不需要两个rdd交互，也不需要组成key value形式。   拿到集合，直接用rdd过滤即可得到结果
+//      val blacklistsArray = adBlacklists.map(adBlacklists=>adBlacklists.userid)
+//      consumerRecordRDD.filter(item=>{
+//        val userId = item.split(" ")(3).toLong
+//        !blacklistsArray.contains(userId)
+//      })
+//      consumerRecordRDD
 
       val blacklistRDD = spark.sparkContext.makeRDD(adBlacklists.map(item => (item.userid, true)))
 

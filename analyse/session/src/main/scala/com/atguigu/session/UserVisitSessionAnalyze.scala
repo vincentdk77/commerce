@@ -57,8 +57,8 @@ object UserVisitSessionAnalyze {
     val sc = spark.sparkContext
 
     // 首先要从user_visit_action的Hive表中，查询出来指定日期范围内的行为数据
-    val actionRDD = this.getActionRDDByDateRange(spark, taskParam)
-//    actionRDD.foreach(println(_))
+    val actionRDD: RDD[UserVisitAction] = this.getActionRDDByDateRange(spark, taskParam)
+    actionRDD.foreach(println(_))
 
     // 将用户行为信息转换为 K-V 结构
     val sessionid2actionRDD = actionRDD.map(item => (item.session_id, item))
@@ -67,7 +67,7 @@ object UserVisitSessionAnalyze {
     sessionid2actionRDD.persist(StorageLevel.MEMORY_ONLY)
 
     // 将数据转换为Session粒度， 格式为<sessionid,(sessionid,searchKeywords,clickCategoryIds,age,professional,city,sex)>
-    val sessionid2AggrInfoRDD = this.aggregateBySession(spark, sessionid2actionRDD)
+    val sessionid2AggrInfoRDD: RDD[(String, String)] = this.aggregateBySession(spark, sessionid2actionRDD)
 
     // 设置自定义累加器，实现所有数据的统计功能,注意累加器也是懒执行的
     val sessionAggrStatAccumulator = new SessionAggrStatAccumulator
@@ -75,9 +75,9 @@ object UserVisitSessionAnalyze {
     // 注册自定义累加器
     sc.register(sessionAggrStatAccumulator, "sessionAggrStatAccumulator")
 
-    // 根据查询任务的配置，过滤用户的行为数据，同时在过滤的过程中，对累加器中的数据进行统计
+    // 根据查询条件，过滤用户的行为数据，同时在过滤的过程中，对累加器中的数据进行统计
     // filteredSessionid2AggrInfoRDD是按照年龄、职业、城市范围、性别、搜索词、点击品类这些条件过滤后的最终结果
-    val filteredSessionid2AggrInfoRDD = filterSessionAndAggrStat(sessionid2AggrInfoRDD, taskParam, sessionAggrStatAccumulator)
+    val filteredSessionid2AggrInfoRDD: RDD[(String, String)] = filterSessionAndAggrStat(sessionid2AggrInfoRDD, taskParam, sessionAggrStatAccumulator)
 
     // 对数据进行内存缓存
     filteredSessionid2AggrInfoRDD.persist(StorageLevel.MEMORY_ONLY)
@@ -85,7 +85,7 @@ object UserVisitSessionAnalyze {
     // sessionid2detailRDD，就是代表了通过筛选的session对应的访问明细数据
     // sessionid2detailRDD是原始完整数据与（用户 + 行为数据）聚合的结果，是符合过滤条件的完整数据
     // sessionid2detailRDD ( sessionId, userAction )
-    val sessionid2detailRDD = getSessionid2detailRDD(filteredSessionid2AggrInfoRDD, sessionid2actionRDD)
+    val sessionid2detailRDD: RDD[(String, UserVisitAction)] = getSessionid2detailRDD(filteredSessionid2AggrInfoRDD, sessionid2actionRDD)
 
     // 对数据进行内存缓存
     sessionid2detailRDD.persist(StorageLevel.MEMORY_ONLY)
@@ -299,6 +299,13 @@ object UserVisitSessionAnalyze {
 
   /**
     * 业务需求三：获取top10热门品类
+    * 数据中的每个 session 可能都会对一些品类的商品进行点击、下单和支付等等行
+    * 为，那么现在就需要获取这些 session 点击、下单和支付数量排名前 10 的最热门的
+    * 品类。也就是说，要计算出所有这些 session 对各个品类的点击、下单和支付的次数，
+    * 然后按照这三个属性进行排序，获取前 10 个品类。
+    * 这个功能，很重要，就可以让我们明白，就是符合条件的用户，他最感兴趣的
+    * 商品是什么种类。这个可以让公司里的人，清晰地了解到不同层次、不同类型的用
+    * 户的心理和喜好
     *
     * @param spark
     * @param taskid
@@ -420,7 +427,10 @@ object UserVisitSessionAnalyze {
       // 通过模式匹配实现了if的功能
       dateHourCountMap.get(date) match {
         // 对应日期的数据不存在，则新增
-        case None => dateHourCountMap(date) = new mutable.HashMap[String, Long](); dateHourCountMap(date) += (hour -> count)
+        case None => {
+          dateHourCountMap(date) = new mutable.HashMap[String, Long]()
+          dateHourCountMap(date) += (hour -> count)
+        }
         // 对应日期的数据存在，则更新
         // 如果有值，Some(hourCountMap)将值取到了hourCountMap中
         case Some(hourCountMap) => hourCountMap += (hour -> count)
@@ -454,7 +464,8 @@ object UserVisitSessionAnalyze {
 
         // 仍然通过模式匹配实现有则追加，无则新建
         hourExtractMap.get(hour) match {
-          case None => hourExtractMap(hour) = new mutable.ListBuffer[Int]();
+          case None => {
+            hourExtractMap(hour) = new mutable.ListBuffer[Int]();
             // 根据数量随机生成下标
             for (i <- 0 to hourExtractNumber) {
               var extractIndex = random.nextInt(count.toInt);
@@ -464,7 +475,9 @@ object UserVisitSessionAnalyze {
               }
               hourExtractMap(hour) += (extractIndex)
             }
-          case Some(extractIndexList) =>
+          }
+
+          case Some(extractIndexList) =>{
             for (i <- 0 to hourExtractNumber) {
               var extractIndex = random.nextInt(count.toInt);
               // 一旦随机生成的index已经存在，重新获取，直到获取到之前没有的index
@@ -473,6 +486,8 @@ object UserVisitSessionAnalyze {
               }
               hourExtractMap(hour) += (extractIndex)
             }
+          }
+
         }
       }
     }
@@ -485,9 +500,11 @@ object UserVisitSessionAnalyze {
 
       // dateHourExtractMap[天，[小时，小时列表]]
       dateHourExtractMap.get(date) match {
-        case None => dateHourExtractMap(date) = new mutable.HashMap[String, mutable.ListBuffer[Int]]();
+        case None =>{
+          dateHourExtractMap(date) = new mutable.HashMap[String, mutable.ListBuffer[Int]]();
           // 更新index
           hourExtractMapFunc(dateHourExtractMap(date), hourCountMap, sessionCount)
+        }
         case Some(hourExtractMap) => hourExtractMapFunc(hourExtractMap, hourCountMap, sessionCount)
       }
     }
@@ -572,7 +589,7 @@ object UserVisitSessionAnalyze {
   }
 
   /**
-    * 计算各session范围占比，并写入MySQL
+    * 计算各session访问时长与访问步长的占比，并写入MySQL
     *
     * @param value
     */
@@ -684,6 +701,7 @@ object UserVisitSessionAnalyze {
       // 接着，依次按照筛选条件进行过滤
       // 按照年龄范围进行过滤（startAge、endAge）
       var success = true
+      // TODO: 为什么 ValidUtils 不用序列化呢？
       if (!ValidUtils.between(aggrInfo, Constants.FIELD_AGE, parameter, Constants.PARAM_START_AGE, Constants.PARAM_END_AGE))
         success = false
 
@@ -722,7 +740,7 @@ object UserVisitSessionAnalyze {
       if (success) {
         sessionAggrStatAccumulator.add(Constants.SESSION_COUNT);
 
-        // 计算访问时长范围
+        // 计算访问时长范围 todo 为什么在算子内部写方法，是不是不能在算子外部写方法呢？
         def calculateVisitLength(visitLength: Long) {
           if (visitLength >= 1 && visitLength <= 3) {
             sessionAggrStatAccumulator.add(Constants.TIME_PERIOD_1s_3s);
@@ -783,7 +801,7 @@ object UserVisitSessionAnalyze {
   def aggregateBySession(spark: SparkSession, sessinoid2actionRDD: RDD[(String, UserVisitAction)]): RDD[(String, String)] = {
 
     // 对行为数据按session粒度进行分组
-    val sessionid2ActionsRDD = sessinoid2actionRDD.groupByKey()
+    val sessionid2ActionsRDD: RDD[(String, Iterable[UserVisitAction])] = sessinoid2actionRDD.groupByKey()
 
     // 对每一个session分组进行聚合，将session中所有的搜索词和点击品类都聚合起来，<userid,partAggrInfo(sessionid,searchKeywords,clickCategoryIds)>
     val userid2PartAggrInfoRDD = sessionid2ActionsRDD.map { case (sessionid, userVisitActions) =>
@@ -872,7 +890,7 @@ object UserVisitSessionAnalyze {
     val userid2InfoRDD = spark.sql("select * from user_info").as[UserInfo].rdd.map(item => (item.user_id, item))
 
     // 将session粒度聚合数据，与用户信息进行join
-    val userid2FullInfoRDD = userid2PartAggrInfoRDD.join(userid2InfoRDD);
+    val userid2FullInfoRDD: RDD[(Long, (String, UserInfo))] = userid2PartAggrInfoRDD.join(userid2InfoRDD)
 
     // 对join起来的数据进行拼接，并且返回<sessionid,fullAggrInfo>格式的数据
     val sessionid2FullAggrInfoRDD = userid2FullInfoRDD.map { case (uid, (partAggrInfo, userInfo)) =>
